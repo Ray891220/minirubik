@@ -46,7 +46,9 @@ static uint8_t path[MAX_DEPTH + 1];
 
 static uint8_t permutation_distance[PERMUTATIONS];
 static uint8_t orientation_distance[ORIENTATIONS];
-
+static uint64_t dfs_calls = 0;
+static uint64_t expanded_nodes = 0;
+static uint64_t heuristic_prunes = 0;
 /* The three quarter-turns preserve the fixed front-upper-left corner. */
 /*@ requires face < 3;
     assigns \nothing;
@@ -228,6 +230,9 @@ static int dfs(uint16_t p, uint16_t o,
                 uint8_t depth, uint8_t limit,
                 int8_t previous_face)
 {
+
+    ++dfs_calls;
+
     /*Already solved*/
     if (p == 0 && o == 0)
         return 1;
@@ -236,12 +241,15 @@ static int dfs(uint16_t p, uint16_t o,
     uint8_t ho = orientation_distance[o];
     uint8_t h = hp > ho ? hp : ho;
 
-    if((uint8_t)(depth + h) > limit) 
+    if ((uint8_t)(depth + h) > limit) {
+        ++heuristic_prunes;
         return 0;
-    
+    }
     /*Reached the depth limit for this iteration*/
     if (depth == limit)
         return 0;
+
+    ++expanded_nodes;
     
     for (uint8_t face = 0; face < 3; ++face) {
         /*Do not turn the same face consecutively*/
@@ -269,12 +277,23 @@ static int dfs(uint16_t p, uint16_t o,
 
 static int solve(const state_t *state, uint8_t *solution_length)
 {
+
+    dfs_calls = 0;
+    expanded_nodes = 0;
+    heuristic_prunes = 0;
+
     uint32_t rank = rank_state(state);
 
     uint16_t start_p = (uint16_t) (rank / ORIENTATIONS);
     uint16_t start_o = (uint16_t) (rank % ORIENTATIONS);
     
-    for (uint8_t limit = 0; limit <= MAX_DEPTH; ++limit) {
+    uint8_t hp = permutation_distance[start_p];
+    uint8_t ho = orientation_distance[start_o];
+    uint8_t start_limit = hp > ho ? hp : ho;
+
+    for (uint8_t limit = start_limit;
+         limit <= MAX_DEPTH;
+         ++limit) {
         if (dfs(start_p, start_o, 0, limit, -1)) {
             *solution_length = limit;
             return 1;
@@ -411,6 +430,125 @@ static int self_test(void)
     return 1;
 }
 
+
+
+static uint8_t *build_exact_distance(void)
+{
+    uint8_t *distance =
+        malloc((size_t)STATES * sizeof *distance);
+
+    uint32_t *queue =
+        malloc((size_t)STATES * sizeof *queue);
+
+    if (distance == NULL || queue == NULL) {
+        free(distance);
+        free(queue);
+        return NULL;
+    }
+
+    memset(distance, 0xFF,
+           (size_t)STATES * sizeof *distance);
+
+    uint32_t head = 0;
+    uint32_t tail = 1;
+
+    distance[0] = 0;
+    queue[0] = 0;
+    while (head < tail) {
+        uint32_t rank = queue[head++];
+        uint8_t d = distance[rank];
+
+        uint16_t p = (uint16_t)(rank / ORIENTATIONS);
+        uint16_t o = (uint16_t)(rank % ORIENTATIONS);
+
+        for (uint8_t face = 0; face < 3; ++face) {
+            uint16_t next_p = p;
+            uint16_t next_o = o;
+
+            for (uint8_t turn = 0; turn < 3; ++turn) {
+                next_p = permutation[face][next_p];
+                next_o = orientation[face][next_o];
+
+                uint32_t next_rank =
+                    (uint32_t)next_p * ORIENTATIONS + next_o;
+
+                if (distance[next_rank] == 0xFF) {
+                    distance[next_rank] = (uint8_t)(d + 1U);
+                    queue[tail++] = next_rank;
+                }
+            }
+        }
+    }
+    free(queue);
+    return distance;
+}
+
+static int verify_all_states(void)
+{
+    uint8_t *exact_distance = build_exact_distance();
+
+    if (exact_distance == NULL) {
+        fputs("failed to build exact-distance table\n", stderr);
+        return 0;
+    }
+
+    for (uint32_t rank = 0; rank < STATES; ++rank) {
+        state_t test;
+        uint8_t solution_length;
+
+        unrank_state(rank, &test);
+
+        if (exact_distance[rank] == 0xFF) {
+            fprintf(stderr,
+                    "FAIL: oracle did not reach rank %u\n",
+                    rank);
+            free(exact_distance);
+            return 0;
+        }
+
+        if (!solve(&test, &solution_length)) {
+            fprintf(stderr,
+                    "FAIL: solver could not solve rank %u\n",
+                    rank);
+            free(exact_distance);
+            return 0;
+        }
+
+        if (solution_length != exact_distance[rank]) {
+            fprintf(stderr,
+                    "FAIL: rank %u, expected %u moves, got %u\n",
+                    rank,
+                    exact_distance[rank],
+                    solution_length);
+            free(exact_distance);
+            return 0;
+        }
+
+        state_t replay = test;
+
+        for (uint8_t i = 0; i < solution_length; ++i)
+            replay = apply_move(replay, path[i]);
+
+        if (rank_state(&replay) != 0) {
+            fprintf(stderr,
+                    "FAIL: solution path does not solve rank %u\n",
+                    rank);
+            free(exact_distance);
+            return 0;
+        }
+
+        if (rank % 100000U == 0)
+            fprintf(stderr, "verified %u / %u\n", rank, STATES);
+    }
+
+    fprintf(stderr,
+            "PASS: verified all %u states\n",
+            STATES);
+
+    free(exact_distance);
+    return 1;
+}
+
 int main(int argc, char **argv)
 {
     state_t state;
@@ -422,6 +560,15 @@ int main(int argc, char **argv)
         
         return output_failed();
     }
+
+    if (argc == 2 && !strcmp(argv[1], "--verify-all")) {
+        build_transition_tables();
+        build_permutation_distance();
+        build_orientation_distance();
+
+        return verify_all_states() ? 0 : 1;
+    }
+
     if (argc != 2 || !parse_state(argv[1], &state)) {
         /* C99 5.1.2.2.1 lets argv[0] be null when argc is 0. */
         fprintf(stderr, "usage: %s PPPPPPPOOOOOOO\n",
@@ -431,13 +578,22 @@ int main(int argc, char **argv)
     build_transition_tables();
     build_permutation_distance();
     build_orientation_distance();
+
     
+
     uint8_t solution_length;
 
     if (!solve(&state, &solution_length)) {
         fputs("no solution found\n", stderr);
         return 1;
     }
+
+    fprintf(stderr, "dfs calls: %llu\n",
+        (unsigned long long) dfs_calls);
+
+    fprintf(stderr, "expanded nodes: %llu\n",
+        (unsigned long long) expanded_nodes);
+
     const char *separator = "";
 
     for (uint8_t i = 0; i < solution_length; ++i) {
