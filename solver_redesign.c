@@ -256,6 +256,22 @@ static int dfs(uint16_t p, u_int16_t o,
     }
 }
 
+static int solve(const state_t *state, u_int8_t *solution_length)
+{
+    uint32_t rank = rank_state(state);
+
+    uint16_t start_p = (uint16_t) (rank / ORIENTATIONS);
+    uint16_t start_o = (uint16_t) (rank % ORIENTATIONS);
+    
+    for (u_int8_t limit = 0; limit <= MAX_DEPTH; ++limit) {
+        if (dfs(start_p, start_o, 0, limit, -1)) {
+            *solution_length = limit;
+            return 1;
+        }
+    }
+    return 0;
+}
+
 /*@ requires valid_read_string(input);
     requires \valid(state);
     assigns state->p[0..6], state->o[0..6];
