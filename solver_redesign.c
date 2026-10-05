@@ -221,7 +221,7 @@ static void build_transition_tables(void)
     
 }
 
-static int dfs(uint16_t p, u_int16_t o,
+static int dfs(uint16_t p, uint16_t o,
                 uint8_t depth, uint8_t limit,
                 int8_t previous_face)
 {
@@ -238,14 +238,14 @@ static int dfs(uint16_t p, u_int16_t o,
         if (face == previous_face)
             continue;
         
-        u_int16_t next_p = p;
-        u_int16_t next_o = o;
+        uint16_t next_p = p;
+        uint16_t next_o = o;
 
         for (uint8_t turn = 0; turn < 3; ++turn) {
             next_p = permutation[face][next_p];
             next_o = orientation[face][next_o];
 
-            path[depth] = (u_int8_t) (face * 3U + turn);
+            path[depth] = (uint8_t) (face * 3U + turn);
 
             if (dfs(next_p, next_o,
                    (uint8_t)(depth + 1U),
@@ -254,16 +254,17 @@ static int dfs(uint16_t p, u_int16_t o,
                 return 1;
         }
     }
+    return 0;
 }
 
-static int solve(const state_t *state, u_int8_t *solution_length)
+static int solve(const state_t *state, uint8_t *solution_length)
 {
     uint32_t rank = rank_state(state);
 
     uint16_t start_p = (uint16_t) (rank / ORIENTATIONS);
     uint16_t start_o = (uint16_t) (rank % ORIENTATIONS);
     
-    for (u_int8_t limit = 0; limit <= MAX_DEPTH; ++limit) {
+    for (uint8_t limit = 0; limit <= MAX_DEPTH; ++limit) {
         if (dfs(start_p, start_o, 0, limit, -1)) {
             *solution_length = limit;
             return 1;
@@ -356,13 +357,20 @@ int main(int argc, char **argv)
                 argc > 0 && argv[0] ? argv[0] : "solver");
         return 2;
     }
-    
-    const char *separator = "";
-    for (uint32_t rank = rank_state(&state); rank; rank = rank_state(&state)) {
-        printf("%s%s", separator, move_names[move]);
-        separator = " ";
-        state = apply_move(state, move);
+    build_transition_tables();
+    uint8_t solution_length;
+
+    if (!solve(&state, &solution_length)) {
+        fputs("no solution found\n", stderr);
+        return 1;
     }
+    const char *separator = "";
+
+    for (uint8_t i = 0; i < solution_length; ++i) {
+        printf("%s%s", separator, move_names[path[i]]);
+        separator = " ";
+    }
+
     putchar('\n');
     return output_failed();
 }
