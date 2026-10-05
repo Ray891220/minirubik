@@ -44,6 +44,9 @@ static uint16_t permutation[3][PERMUTATIONS];
 static uint16_t orientation[3][ORIENTATIONS];
 static uint8_t path[MAX_DEPTH + 1];
 
+static uint8_t permutation_distance[PERMUTATIONS];
+static uint8_t orientation_distance[ORIENTATIONS];
+
 /* The three quarter-turns preserve the fixed front-upper-left corner. */
 /*@ requires face < 3;
     assigns \nothing;
@@ -228,6 +231,13 @@ static int dfs(uint16_t p, uint16_t o,
     /*Already solved*/
     if (p == 0 && o == 0)
         return 1;
+
+    uint8_t hp = permutation_distance[p];
+    uint8_t ho = orientation_distance[o];
+    uint8_t h = hp > ho ? hp : ho;
+
+    if((uint8_t)(depth + h) > limit) 
+        return 0;
     
     /*Reached the depth limit for this iteration*/
     if (depth == limit)
@@ -272,6 +282,67 @@ static int solve(const state_t *state, uint8_t *solution_length)
     }
     return 0;
 }
+
+static void build_permutation_distance(void) 
+{
+    uint16_t queue[PERMUTATIONS];
+    uint16_t head = 0;
+    uint16_t tail = 1;
+    
+    memset(permutation_distance, 0xFF, sizeof permutation_distance);
+
+    permutation_distance[0] = 0;
+    queue[0] = 0;
+
+    while (head < tail) {
+        uint16_t p = queue[head++];
+        uint8_t d = permutation_distance[p];
+
+        for (uint8_t face = 0; face < 3; ++face) {
+            uint16_t next_p = p;
+
+            for (uint8_t turn = 0; turn < 3; ++turn) {
+                next_p = permutation[face][next_p];
+
+                if (permutation_distance[next_p] == 0xFF) {
+                    permutation_distance[next_p] = (uint8_t)(d + 1U);
+                    queue[tail++] = next_p;
+                }
+            }
+        }
+    }
+}
+
+static void build_orientation_distance(void) 
+{
+    uint16_t queue[ORIENTATIONS];
+    uint16_t head = 0;
+    uint16_t tail = 1;
+    
+    memset(orientation_distance, 0xFF, sizeof orientation_distance);
+
+    orientation_distance[0] = 0;
+    queue[0] = 0;
+
+    while (head < tail) {
+        uint16_t o = queue[head++];
+        uint8_t d = orientation_distance[o];
+
+        for (uint8_t face = 0; face < 3; ++face) {
+            uint16_t next_o = o;
+
+            for (uint8_t turn = 0; turn < 3; ++turn) {
+                next_o = orientation[face][next_o];
+
+                if (orientation_distance[next_o] == 0xFF) {
+                    orientation_distance[next_o] = (uint8_t)(d + 1U);
+                    queue[tail++] = next_o;
+                }
+            }
+        }
+    }
+}
+
 
 /*@ requires valid_read_string(input);
     requires \valid(state);
@@ -358,6 +429,9 @@ int main(int argc, char **argv)
         return 2;
     }
     build_transition_tables();
+    build_permutation_distance();
+    build_orientation_distance();
+    
     uint8_t solution_length;
 
     if (!solve(&state, &solution_length)) {
