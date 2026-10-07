@@ -140,7 +140,7 @@ static void unrank_state(uint32_t rank, state_t *state)
         uint8_t q = (uint8_t) (p / f);
         p %= f;
         state->p[i] = available[q];
-        for (uint8_t j = q; j + 1U < CUBIES - i; ++j)
+        for (uint8_t j = q; j + 1 < CUBIES - i; ++j)
             available[j] = available[j + 1U];
         if (i < 5)
             f /= 6U - i;
@@ -549,11 +549,9 @@ static int verify_all_states(void)
     return 1;
 }
 
-static void dump_perm_r(void)
+static void dump_perm_table(uint8_t face, const char *label)
 {
-    puts(".section .rodata");
-    puts(".align 1");
-    puts("perm_R:");
+    printf("%s:\n", label);
 
     for (uint32_t i = 0; i < PERMUTATIONS; ++i) {
         if (i % 12U == 0)
@@ -561,11 +559,21 @@ static void dump_perm_r(void)
         else
             printf(", ");
 
-        printf("%u", permutation[0][i]);
+        printf("%u", permutation[face][i]);
 
         if (i % 12U == 11U || i + 1U == PERMUTATIONS)
             putchar('\n');
     }
+}
+
+static void dump_permutation_tables(void)
+{
+    puts(".section .rodata");
+    puts(".align 1");
+
+    dump_perm_table(0, "perm_R");
+    dump_perm_table(1, "perm_B");
+    dump_perm_table(2, "perm_D");
 }
 
 int main(int argc, char **argv)
@@ -588,9 +596,9 @@ int main(int argc, char **argv)
         return verify_all_states() ? 0 : 1;
     }
 
-    if (argc == 2 && !strcmp(argv[1], "--dump-perm-r")) {
+    if (argc == 2 && !strcmp(argv[1], "--dump-perm")) {
     build_transition_tables();
-    dump_perm_r();
+    dump_permutation_tables();
     return output_failed();
     }
 
