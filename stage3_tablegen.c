@@ -576,6 +576,66 @@ static void dump_permutation_tables(void)
     dump_perm_table(2, "perm_D");
 }
 
+static void dump_orientation_table(uint8_t face, const char *label)
+{
+    printf("%s:\n", label);
+
+    for (uint32_t i = 0; i < ORIENTATIONS; ++i) {
+        if (i % 12U == 0)
+            printf("    .half ");
+        else
+            printf(", ");
+
+        printf("%u", orientation[face][i]);
+
+        if (i % 12U == 11U || i + 1U == ORIENTATIONS)
+            putchar('\n');
+    }
+}
+
+static void dump_orientation_tables(void)
+{
+    puts(".section .rodata");
+    puts(".align 1");
+
+    dump_orientation_table(0, "ori_R");
+    dump_orientation_table(1, "ori_B");
+    dump_orientation_table(2, "ori_D");
+}
+
+static void dump_byte_table(const uint8_t *table,
+                            uint32_t count,
+                            const char *label)
+{
+    printf("%s:\n", label);
+
+    for (uint32_t i = 0; i < count; ++i) {
+        if (i % 16U == 0)
+            printf("    .byte ");
+        else
+            printf(", ");
+
+        printf("%u", table[i]);
+
+        if (i % 16U == 15U || i + 1U == count)
+            putchar('\n');
+    }
+}
+
+static void dump_heuristic_tables(void)
+{
+    puts(".section .rodata");
+    puts(".align 1");
+
+    dump_byte_table(permutation_distance,
+                    PERMUTATIONS,
+                    "perm_distance");
+
+    dump_byte_table(orientation_distance,
+                    ORIENTATIONS,
+                    "ori_distance");
+}
+
 int main(int argc, char **argv)
 {
     state_t state;
@@ -599,6 +659,21 @@ int main(int argc, char **argv)
     if (argc == 2 && !strcmp(argv[1], "--dump-perm")) {
     build_transition_tables();
     dump_permutation_tables();
+    return output_failed();
+    }
+
+    if (argc == 2 && !strcmp(argv[1], "--dump-ori")) {
+    build_transition_tables();
+    dump_orientation_tables();
+    return output_failed();
+    }
+
+    if (argc == 2 && !strcmp(argv[1], "--dump-heuristic")) {
+    build_transition_tables();
+    build_permutation_distance();
+    build_orientation_distance();
+
+    dump_heuristic_tables();
     return output_failed();
     }
 
