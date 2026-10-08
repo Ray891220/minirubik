@@ -94,40 +94,62 @@ static state_t apply_move(state_t state, uint8_t move)
     assigns \nothing;
     ensures \result < STATES;
  */
-static uint32_t rank_state(const state_t *state)
+
+ static uint16_t mul_small(uint16_t x, uint8_t factor)
 {
-    uint32_t p = 0, o = 0;
-    /*@ loop invariant 0 <= i <= CUBIES;
-        loop invariant (i == 0 ==> p == 0) && (i == 1 ==> p <= 6) &&
-          (i == 2 ==> p <= 41) && (i == 3 ==> p <= 209) &&
-          (i == 4 ==> p <= 839) && (i == 5 ==> p <= 2519) &&
-          (i >= 6 ==> p <= 5039);
-        loop assigns i, p;
-        loop variant CUBIES - i;
-     */
+    switch (factor) {
+    case 7:
+        return (uint16_t)((x << 3) - x);       /* x * 7 */
+    case 6:
+        return (uint16_t)((x << 2) + (x << 1)); /* x * 6 */
+    case 5:
+        return (uint16_t)((x << 2) + x);       /* x * 5 */
+    case 4:
+        return (uint16_t)(x << 2);
+    case 3:
+        return (uint16_t)((x << 1) + x);
+    case 2:
+        return (uint16_t)(x << 1);
+    default:
+        return x;                              /* factor = 1 */
+    }
+}
+static uint16_t rank_permutation(const state_t *state)
+{
+    uint16_t p = 0;
+
     for (uint8_t i = 0; i < CUBIES; ++i) {
         uint8_t smaller = 0;
-        /*@ loop invariant i + 1 <= j <= CUBIES;
-            loop invariant smaller <= j - i - 1;
-            loop assigns j, smaller;
-            loop variant CUBIES - j;
-         */
-        for (uint8_t j = (uint8_t) (i + 1U); j < CUBIES; ++j)
+
+        for (uint8_t j = (uint8_t)(i + 1U);
+             j < CUBIES;
+             ++j) {
             if (state->p[j] < state->p[i])
                 ++smaller;
-        p = p * (CUBIES - i) + smaller;
+        }
+
+        p = (uint16_t)(mul_small(p, (uint8_t)(CUBIES - i)) + smaller);
     }
-    /*@ loop invariant 0 <= i <= 6;
-        loop invariant (i == 0 ==> o == 0) && (i == 1 ==> o < 3) &&
-          (i == 2 ==> o < 9) && (i == 3 ==> o < 27) &&
-          (i == 4 ==> o < 81) && (i == 5 ==> o < 243) &&
-          (i == 6 ==> o < 729);
-        loop assigns i, o;
-        loop variant 6 - i;
-     */
+
+    return p;
+}
+
+static uint16_t rank_orientation(const state_t *state)
+{
+    uint16_t o = 0;
+
     for (uint8_t i = 0; i < 6; ++i)
-        o = o * 3U + state->o[i];
-    return p * ORIENTATIONS + o;
+        o = (uint16_t)(o * 3U + state->o[i]);
+
+    return o;
+}
+
+static uint32_t rank_state(const state_t *state)
+{
+    uint16_t p = rank_permutation(state);
+    uint16_t o = rank_orientation(state);
+
+    return (uint32_t)p * ORIENTATIONS + o;
 }
 
 /*@ requires \valid(state); requires rank < STATES; assigns *state; */
@@ -368,10 +390,8 @@ static int solve(const state_t *state, uint8_t *solution_length)
     expanded_nodes = 0;
     heuristic_prunes = 0;
 
-    uint32_t rank = rank_state(state);
-
-    uint16_t start_p = (uint16_t) (rank / ORIENTATIONS);
-    uint16_t start_o = (uint16_t) (rank % ORIENTATIONS);
+    uint16_t start_p = rank_permutation(state);
+    uint16_t start_o = rank_orientation(state);
     
     uint8_t hp = permutation_distance[start_p];
     uint8_t ho = orientation_distance[start_o];
