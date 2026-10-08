@@ -12,7 +12,7 @@ main:
 
 done:
     j done
-.section .rodata
+.data
 .align 1
 perm_R:
     .half 1104, 1105, 1224, 1225, 1344, 1345, 984, 985, 1226, 1227, 1346, 1347
