@@ -226,53 +226,139 @@ static void build_transition_tables(void)
     
 }
 
-static int dfs(uint16_t p, uint16_t o,
-                uint8_t depth, uint8_t limit,
-                int8_t previous_face)
+static int dfs_iterative(uint16_t start_p, uint16_t start_o,
+                         uint8_t limit)
 {
+    typedef struct {
+        uint16_t p, o;
+        uint16_t next_p, next_o;
+        int8_t previous_face;
+        uint8_t face;
+        uint8_t turn;
+        uint8_t entered;
+    } frame_t;
 
-    ++dfs_calls;
+    frame_t stack[MAX_DEPTH + 1];
+    uint8_t depth = 0;
 
-    /*Already solved*/
-    if (p == 0 && o == 0)
-        return 1;
+    /* Root node */
+    stack[0].p = start_p;
+    stack[0].o = start_o;
+    stack[0].previous_face = -1;
+    stack[0].entered = 0;
 
-    uint8_t hp = permutation_distance[p];
-    uint8_t ho = orientation_distance[o];
-    uint8_t h = hp > ho ? hp : ho;
+    for (;;) {
+        frame_t *f = &stack[depth];
 
-    if ((uint8_t)(depth + h) > limit) {
-        ++heuristic_prunes;
-        return 0;
-    }
-    /*Reached the depth limit for this iteration*/
-    if (depth == limit)
-        return 0;
+        /*
+         * Equivalent to entering recursive dfs().
+         * This block is executed exactly once per node.
+         */
+        if (!f->entered) {
+            f->entered = 1;
+            ++dfs_calls;
 
-    ++expanded_nodes;
-    
-    for (uint8_t face = 0; face < 3; ++face) {
-        /*Do not turn the same face consecutively*/
-        if (face == previous_face)
-            continue;
-        
-        uint16_t next_p = p;
-        uint16_t next_o = o;
-
-        for (uint8_t turn = 0; turn < 3; ++turn) {
-            next_p = permutation[face][next_p];
-            next_o = orientation[face][next_o];
-
-            path[depth] = (uint8_t) (face * 3U + turn);
-
-            if (dfs(next_p, next_o,
-                   (uint8_t)(depth + 1U),
-                    limit,
-                    (int8_t) face))
+            /* Already solved */
+            if (f->p == 0 && f->o == 0)
                 return 1;
+
+            uint8_t hp = permutation_distance[f->p];
+            uint8_t ho = orientation_distance[f->o];
+            uint8_t h = hp > ho ? hp : ho;
+
+            /* Heuristic pruning */
+            if ((uint8_t)(depth + h) > limit) {
+                ++heuristic_prunes;
+                goto backtrack;
+            }
+
+            /* Reached depth limit */
+            if (depth == limit)
+                goto backtrack;
+
+            ++expanded_nodes;
+
+            /* Start exploring children */
+            f->face = 0;
+            f->turn = 0;
         }
+
+        /*
+         * Find the next child of this node.
+         */
+        for (;;) {
+            /* All faces finished */
+            if (f->face >= 3)
+                goto backtrack;
+
+            /* Do not turn the same face consecutively */
+            if (f->face == (uint8_t) f->previous_face) {
+                ++f->face;
+                f->turn = 0;
+                continue;
+            }
+
+            /* R/R2/R' finished for this face */
+            if (f->turn >= 3) {
+                ++f->face;
+                f->turn = 0;
+                continue;
+            }
+
+            /*
+             * For the first turn of a face,
+             * start from the parent state.
+             */
+            if (f->turn == 0) {
+                f->next_p = f->p;
+                f->next_o = f->o;
+            }
+
+            /*
+             * Chained quarter turns:
+             *
+             * turn = 0 -> X
+             * turn = 1 -> X2
+             * turn = 2 -> X'
+             */
+            f->next_p = permutation[f->face][f->next_p];
+            f->next_o = orientation[f->face][f->next_o];
+
+            path[depth] =
+                (uint8_t)(f->face * 3U + f->turn);
+
+            uint8_t child_face = f->face;
+
+            /*
+             * Increment before descending so that,
+             * after backtracking, the parent resumes
+             * at the next turn.
+             */
+            ++f->turn;
+
+            /* Push child */
+            ++depth;
+
+            stack[depth].p = f->next_p;
+            stack[depth].o = f->next_o;
+            stack[depth].previous_face = (int8_t) child_face;
+            stack[depth].entered = 0;
+
+            break;
+        }
+
+        continue;
+
+backtrack:
+        /*
+         * Root exhausted -> no solution at this limit.
+         */
+        if (depth == 0)
+            return 0;
+
+        /* Pop current node */
+        --depth;
     }
-    return 0;
 }
 
 static int solve(const state_t *state, uint8_t *solution_length)
@@ -294,10 +380,10 @@ static int solve(const state_t *state, uint8_t *solution_length)
     for (uint8_t limit = start_limit;
          limit <= MAX_DEPTH;
          ++limit) {
-        if (dfs(start_p, start_o, 0, limit, -1)) {
+        if (dfs_iterative(start_p, start_o, limit)) {
             *solution_length = limit;
             return 1;
-        }
+}
     }
     return 0;
 }
