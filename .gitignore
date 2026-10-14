@@ -4,3 +4,9 @@
 solver
 mini
 stage3_tablegen
+*.o
+*.elf
+solver_redesign
+solver_stage3
+stage3_verify.log
+gcc_baseline_all.s
