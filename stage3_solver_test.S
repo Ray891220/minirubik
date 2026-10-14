@@ -2,20 +2,22 @@
 
 # --------------------------------------------------
 # Test state:
-# solved cube after one R turn
-# expected optimal solution: R'
-# move code: 2
+# official hard case: 21345671111111
+# expected optimal solution length: 11
 # --------------------------------------------------
 state:
-    .byte 1, 4, 2, 0, 3, 5, 6
-    .byte 1, 2, 0, 2, 1, 0, 0
-
+    .byte 1, 0, 2, 3, 4, 5, 6
+    .byte 0, 0, 0, 0, 0, 0, 0
 # Maximum solution depth = 11
 # allocate 12 bytes
 path:
     .byte 0, 0, 0, 0, 0, 0
     .byte 0, 0, 0, 0, 0, 0
 
+.align 2
+
+dfs_stack:
+    .zero 144
 
 .text
 .globl main
@@ -32,12 +34,9 @@ main:
     # a0 = 1 if found
     # a1 = solution length
 
-    # Put path[0] into a2 for easy inspection
-    la   t0, path
-    lbu  a2, 0(t0)
-
 done:
-    j done
+    li   a7, 10
+    ecall
 
 
 # ==================================================
@@ -212,15 +211,11 @@ solve:
 # Iterative deepening
 # --------------------------------------------------
 solve_loop:
-    mv   a0, s1             # p
-    mv   a1, s2             # o
+    mv   a0, s1             # start_p
+    mv   a1, s2             # start_o
+    mv   a2, s3             # limit
 
-    li   a2, 0              # depth = 0
-    mv   a3, s3             # limit
-
-    li   a4, 3              # previous_face = NONE
-
-    jal  ra, dfs
+    jal  ra, dfs_iterative
 
     bnez a0, solve_found
 
@@ -230,10 +225,7 @@ solve_loop:
     bge  t0, s3, solve_loop
 
 
-    # not found up to depth 11
-    li   a0, 0
-    li   a1, 0
-    j    solve_return
+
 
 
 solve_found:
@@ -251,278 +243,357 @@ solve_return:
     addi sp, sp, 32
     ret
 
-
 # ==================================================
-# dfs
+# dfs_iterative
 #
 # input:
-#   a0 = permutation rank p
-#   a1 = orientation rank o
-#   a2 = depth
-#   a3 = limit
-#   a4 = previous_face
+#   a0 = start permutation rank
+#   a1 = start orientation rank
+#   a2 = depth limit
 #
-# face:
-#   0 = R
-#   1 = B
-#   2 = D
-#   3 = NONE
-#
-# return:
-#   a0 = 1 found
-#   a0 = 0 not found
+# output:
+#   a0 = 1 if solution found
+#   a0 = 0 otherwise
 # ==================================================
-dfs:
-    addi sp, sp, -48
 
-    sw   ra, 44(sp)
-    sw   s0, 40(sp)
-    sw   s1, 36(sp)
-    sw   s2, 32(sp)
-    sw   s3, 28(sp)
-    sw   s4, 24(sp)
-    sw   s5, 20(sp)
-    sw   s6, 16(sp)
-    sw   s7, 12(sp)
-    sw   s8, 8(sp)
+dfs_iterative:
+    addi sp, sp, -32
 
+    sw   ra, 28(sp)
+    sw   s0, 24(sp)
+    sw   s1, 20(sp)
+    sw   s2, 16(sp)
+    sw   s3, 12(sp)
+    sw   s4, 8(sp)
+    sw   s5, 4(sp)
+    sw   s6, 0(sp)
 
-    mv   s0, a0             # p
-    mv   s1, a1             # o
-    mv   s2, a2             # depth
-    mv   s3, a3             # limit
-    mv   s4, a4             # previous_face
+    # s0 = explicit stack base
+    la   s0, dfs_stack
 
+    # s1 = current frame pointer
+    mv   s1, s0
 
-    # ------------------------------------------------
-    # if (p == 0 && o == 0)
-    #     return 1;
-    # ------------------------------------------------
-    or   t0, s0, s1
-    beqz t0, dfs_success
+    # s2 = current depth
+    li   s2, 0
+
+    # s3 = depth limit
+    mv   s3, a2
 
 
-    # ------------------------------------------------
-    # hp = perm_distance[p]
-    # ------------------------------------------------
-    la   t0, perm_distance
-    add  t0, t0, s0
-    lbu  t1, 0(t0)
+    # ----------------------------------------------
+    # Initialize root frame
+    # ----------------------------------------------
 
-
-    # ------------------------------------------------
-    # ho = ori_distance[o]
-    # ------------------------------------------------
-    la   t0, ori_distance
-    add  t0, t0, s1
-    lbu  t2, 0(t0)
-
-
-    # ------------------------------------------------
-    # h = max(hp, ho)
-    # ------------------------------------------------
-    bge  t1, t2, dfs_have_h
-    mv   t1, t2
-
-
-dfs_have_h:
-
-    # ------------------------------------------------
-    # if (depth + h > limit)
-    #     prune
-    # ------------------------------------------------
-    add  t0, s2, t1
-
-    # limit < depth+h
-    blt  s3, t0, dfs_fail
-
-
-    # ------------------------------------------------
-    # if (depth == limit)
-    #     return 0;
-    # ------------------------------------------------
-    beq  s2, s3, dfs_fail
-
-
-    # ------------------------------------------------
-    # face = 0
-    # ------------------------------------------------
-    li   s5, 0
-
-
-# ==================================================
-# for face = R, B, D
-# ==================================================
-dfs_face_loop:
+    sh   a0, 0(s1)       # p = start_p
+    sh   a1, 2(s1)       # o = start_o
 
     li   t0, 3
-    bge  s5, t0, dfs_fail
+    sb   t0, 8(s1)       # previous_face = NONE
+
+    sb   zero, 11(s1)    # entered = 0
 
 
-    # ------------------------------------------------
-    # Do not use same face twice consecutively
-    # ------------------------------------------------
-    beq  s5, s4, dfs_next_face
+    dfs_iter_loop:
+    # entered = frame[11]
+    lbu  t0, 11(s1)
 
+    # entered != 0:
+    # this node was already processed before
+    bnez t0, dfs_iter_children
 
-    # next_p = p
-    # next_o = o
-    mv   s6, s0
-    mv   s7, s1
-
-
-    # turn = 0
-    # 0 = quarter turn
-    # 1 = half turn
-    # 2 = inverse quarter turn
-    li   s8, 0
-
-
-# ==================================================
-# for turn = 0..2
-# ==================================================
-dfs_turn_loop:
-
-    # ------------------------------------------------
-    # Choose transition tables based on face
-    # ------------------------------------------------
-    beqz s5, dfs_table_R
-
+    # First time entering this node
     li   t0, 1
-    beq  s5, t0, dfs_table_B
+    sb   t0, 11(s1)      # entered = 1
+
+    # ----------------------------------------------
+    # Goal test: if (p == 0 && o == 0)
+    # ----------------------------------------------
+
+    lhu  t0, 0(s1)       # t0 = p
+    lhu  t1, 2(s1)       # t1 = o
+
+    or   t2, t0, t1
+
+    beqz t2, dfs_iter_success
+
+    # ----------------------------------------------
+    # Heuristic lookup
+    # hp = perm_distance[p]
+    # ho = ori_distance[o]
+    # ----------------------------------------------
+
+    la   t3, perm_distance
+    add  t3, t3, t0
+    lbu  t3, 0(t3)       # t3 = hp
+
+    la   t4, ori_distance
+    add  t4, t4, t1
+    lbu  t4, 0(t4)       # t4 = ho
+
+        # ----------------------------------------------
+    # h = max(hp, ho)
+    # ----------------------------------------------
+
+    mv   t5, t3           # assume h = hp
+    bgeu t3, t4, dfs_iter_have_h
+
+    mv   t5, t4           # if ho > hp, h = ho
+
+dfs_iter_have_h:
+
+    # ----------------------------------------------
+    # if (depth + h > limit)
+    #     backtrack
+    # ----------------------------------------------
+
+    add  t6, s2, t5      # t6 = depth + h
+
+    bltu s3, t6, dfs_iter_backtrack
+
+    # ----------------------------------------------
+    # if (depth == limit)
+    #     backtrack
+    # ----------------------------------------------
+
+    beq  s2, s3, dfs_iter_backtrack
+
+    # ----------------------------------------------
+    # Initialize child exploration
+    # face = 0
+    # turn = 0
+    # ----------------------------------------------
+
+    sb   zero, 9(s1)     # frame.face = 0
+    sb   zero, 10(s1)    # frame.turn = 0
+
+    j    dfs_iter_children
+
+dfs_iter_backtrack:
+    # ----------------------------------------------
+    # Backtrack to parent frame
+    # ----------------------------------------------
+
+    beqz s2, dfs_iter_fail    # depth == 0 -> no parent
+
+    addi s1, s1, -12          # current frame = parent frame
+    addi s2, s2, -1           # depth--
+
+    j    dfs_iter_loop
+
+dfs_iter_fail:
+    li   a0, 0
+    j    dfs_iter_return
+
+dfs_iter_children:
+    # ----------------------------------------------
+    # if (face >= 3)
+    #     backtrack
+    # ----------------------------------------------
+
+    lbu  t0, 9(s1)       # t0 = face
+
+    li   t1, 3
+    bgeu t0, t1, dfs_iter_backtrack
 
 
-# -----------------------
-# face = D
-# -----------------------
-dfs_table_D:
+    # ----------------------------------------------
+    # Same-face pruning
+    # if (face == previous_face)
+    #     skip this face
+    # ----------------------------------------------
+
+    lbu  t2, 8(s1)       # t2 = previous_face
+
+    beq  t0, t2, dfs_iter_next_face
+
+
+    # ----------------------------------------------
+    # if (turn >= 3)
+    #     go to next face
+    # ----------------------------------------------
+
+    lbu  t3, 10(s1)      # t3 = turn
+
+    li   t4, 3
+    bgeu t3, t4, dfs_iter_next_face
+
+    # ----------------------------------------------
+    # if (turn == 0)
+    #     next_p = p
+    #     next_o = o
+    # ----------------------------------------------
+
+    bnez t3, dfs_iter_have_next_state
+
+    lhu  t4, 0(s1)       # t4 = p
+    sh   t4, 4(s1)       # next_p = p
+
+    lhu  t4, 2(s1)       # t4 = o
+    sh   t4, 6(s1)       # next_o = o
+
+
+dfs_iter_have_next_state:
+
+    # ----------------------------------------------
+    # Select transition tables by face
+    #
+    # face = 0 -> R
+    # face = 1 -> B
+    # face = 2 -> D
+    # ----------------------------------------------
+
+    lbu  t0, 9(s1)       # t0 = face
+
+    beqz t0, dfs_iter_table_R
+
+    li   t1, 1
+    beq  t0, t1, dfs_iter_table_B
+
+    # otherwise face = 2 -> D
+dfs_iter_table_D:
     la   t3, perm_D
     la   t4, ori_D
-    j    dfs_have_tables
+    j    dfs_iter_have_tables
 
 
-# -----------------------
-# face = R
-# -----------------------
-dfs_table_R:
+dfs_iter_table_R:
     la   t3, perm_R
     la   t4, ori_R
-    j    dfs_have_tables
+    j    dfs_iter_have_tables
 
 
-# -----------------------
-# face = B
-# -----------------------
-dfs_table_B:
+dfs_iter_table_B:
     la   t3, perm_B
     la   t4, ori_B
 
 
-dfs_have_tables:
+dfs_iter_have_tables:
 
-    # ------------------------------------------------
+    # ----------------------------------------------
     # next_p = permutation[face][next_p]
     #
-    # uint16_t -> index * 2
-    # ------------------------------------------------
-    slli t0, s6, 1
-    add  t0, t3, t0
-    lhu  s6, 0(t0)
+    # next_p is uint16_t, so table index = next_p * 2
+    # t3 = selected permutation table base
+    # ----------------------------------------------
+
+    lhu  t5, 4(s1)       # t5 = next_p
+
+    slli t5, t5, 1       # byte offset = next_p * 2
+    add  t5, t3, t5      # &table[next_p]
+
+    lhu  t6, 0(t5)       # t6 = table[next_p]
+
+    sh   t6, 4(s1)       # frame.next_p = result
 
 
-    # ------------------------------------------------
+    # ----------------------------------------------
     # next_o = orientation[face][next_o]
-    # ------------------------------------------------
-    slli t0, s7, 1
-    add  t0, t4, t0
-    lhu  s7, 0(t0)
+    #
+    # next_o is uint16_t, so table index = next_o * 2
+    # t4 = selected orientation table base
+    # ----------------------------------------------
+
+    lhu  t5, 6(s1)       # t5 = next_o
+
+    slli t5, t5, 1       # byte offset = next_o * 2
+    add  t5, t4, t5      # &table[next_o]
+
+    lhu  t6, 0(t5)       # t6 = table[next_o]
+
+    sh   t6, 6(s1)       # frame.next_o = result
 
 
-    # ------------------------------------------------
+    # ----------------------------------------------
     # move = face * 3 + turn
-    # ------------------------------------------------
-    slli t0, s5, 1          # face * 2
-    add  t0, t0, s5         # face * 3
-    add  t0, t0, s8         # + turn
+    # ----------------------------------------------
 
+    lbu  t0, 9(s1)       # t0 = face
+    lbu  t1, 10(s1)      # t1 = turn
 
-    # ------------------------------------------------
+    slli t2, t0, 1       # face * 2
+    add  t2, t2, t0      # face * 3
+    add  t2, t2, t1      # face * 3 + turn
+
+    # ----------------------------------------------
     # path[depth] = move
-    # ------------------------------------------------
-    la   t1, path
-    add  t1, t1, s2
-    sb   t0, 0(t1)
+    # ----------------------------------------------
 
+    la   t3, path
+    add  t3, t3, s2      # &path[depth]
 
-    # ------------------------------------------------
-    # dfs(next_p,
-    #     next_o,
-    #     depth + 1,
-    #     limit,
-    #     face)
-    # ------------------------------------------------
-    mv   a0, s6
-    mv   a1, s7
-    addi a2, s2, 1
-    mv   a3, s3
-    mv   a4, s5
+    sb   t2, 0(t3)       # path[depth] = move
 
-    jal  ra, dfs
+    # ----------------------------------------------
+    # Parent will continue with the next turn
+    # after the child returns.
+    # ----------------------------------------------
 
+    addi t1, t1, 1       # turn++
 
-    # child found solution
-    bnez a0, dfs_success
+    sb   t1, 10(s1)      # save updated turn in parent frame
 
+    # ----------------------------------------------
+    # Load child state from parent frame
+    # ----------------------------------------------
 
-    # ------------------------------------------------
-    # turn++
-    # ------------------------------------------------
-    addi s8, s8, 1
+    lhu  t3, 4(s1)       # t3 = next_p
+    lhu  t4, 6(s1)       # t4 = next_o
 
-    li   t0, 3
-    blt  s8, t0, dfs_turn_loop
+    # ----------------------------------------------
+    # Push: move to child frame
+    # ----------------------------------------------
 
+    addi s1, s1, 12      # s1 = child frame pointer
+    addi s2, s2, 1       # depth++
 
-# --------------------------------------------------
-# next face
-# --------------------------------------------------
-dfs_next_face:
-    addi s5, s5, 1
-    j    dfs_face_loop
+    # ----------------------------------------------
+    # Initialize child state
+    # ----------------------------------------------
 
+    sh   t3, 0(s1)       # child.p = next_p
+    sh   t4, 2(s1)       # child.o = next_o
 
-# ==================================================
-# return success
-# ==================================================
-dfs_success:
+    # ----------------------------------------------
+    # child.previous_face = parent face
+    # ----------------------------------------------
+
+    sb   t0, 8(s1)
+
+    # ----------------------------------------------
+    # child.entered = 0
+    # ----------------------------------------------
+
+    sb   zero, 11(s1)
+
+    # Start processing the child
+    j    dfs_iter_loop
+
+dfs_iter_next_face:
+    addi t0, t0, 1       # face++
+
+    sb   t0, 9(s1)       # save new face
+    sb   zero, 10(s1)    # turn = 0
+
+    j    dfs_iter_children
+
+dfs_iter_success:
     li   a0, 1
-    j    dfs_return
+    j    dfs_iter_return
 
+dfs_iter_return:
+    lw   s6, 0(sp)
+    lw   s5, 4(sp)
+    lw   s4, 8(sp)
+    lw   s3, 12(sp)
+    lw   s2, 16(sp)
+    lw   s1, 20(sp)
+    lw   s0, 24(sp)
+    lw   ra, 28(sp)
 
-# ==================================================
-# return failure
-# ==================================================
-dfs_fail:
-    li   a0, 0
-
-
-# ==================================================
-# restore stack frame
-# ==================================================
-dfs_return:
-    lw   s8, 8(sp)
-    lw   s7, 12(sp)
-    lw   s6, 16(sp)
-    lw   s5, 20(sp)
-    lw   s4, 24(sp)
-    lw   s3, 28(sp)
-    lw   s2, 32(sp)
-    lw   s1, 36(sp)
-    lw   s0, 40(sp)
-    lw   ra, 44(sp)
-
-    addi sp, sp, 48
+    addi sp, sp, 32
     ret
+
 .data
 .align 1
 perm_R:
