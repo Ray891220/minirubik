@@ -39,7 +39,7 @@ dfs_stack:
 # ==================================================
 main:
     # LED MMIO and renderer pointers, saved across solve().
-    lui  s0, 0xF0000
+    li   s0, LED_MATRIX_0_BASE
     la   s1, facelets
     la   s2, palette
     la   s3, face_origin_x
